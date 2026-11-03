@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8">
+  <title>Malaysia Map Puzzle - AI Finger Challenge</title>
+  <!-- MediaPipe Libraries untuk Pengesanan Jari (Webcam) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <style>
+    /* =========================================================================
+       CSS STYLES (Glassmorphism, Neon, Responsive)
+       ========================================================================= */
+    :root {
+      --bg-color: #0b0f19;
+      --neon-cyan: #00f3ff;
+      --neon-blue: #0073ff;
+      --neon-purple: #bc13fe;
+      --neon-green: #00ff66;
+      --neon-red: #ff0055;
+      --glass-bg: rgba(16, 25, 43, 0.6);
+      --glass-border: rgba(255, 255, 255, 0.1);
+      --text-main: #ffffff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      overflow: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(0, 115, 255, 0.15), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(188, 19, 254, 0.15), transparent 25%);
+      user-select: none;
+    }
+
+    .screen {
+      position: absolute;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    .screen.active { display: flex; }
+
+    .glass-panel {
+      background: var(--glass-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      border-radius: 20px;
+      padding: 30px;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      text-align: center;
+    }
+
+    h1, h2 { text-transform: uppercase; letter-spacing: 2px; text-shadow: 0 0 10px var(--neon-cyan); margin-bottom: 20px; }
+    h1 { font-size: 2.5rem; color: var(--neon-cyan); }
+
+    input {
+      width: 100%; padding: 15px; margin: 10px 0 25px 0;
+      border-radius: 10px; border: 1px solid var(--neon-blue);
+      background: rgba(0,0,0,0.5); color: white;
+      font-size: 1.2rem; outline: none; transition: 0.3s;
+    }
+    input:focus { box-shadow: 0 0 15px var(--neon-blue); }
+
+    button {
+      padding: 15px 30px; font-size: 1.2rem; font-weight: bold;
+      color: white; background: linear-gradient(45deg, var(--neon-blue), var(--neon-purple));
+      border: none; border-radius: 10px; cursor: pointer;
+      box-shadow: 0 0 15px rgba(188, 19, 254, 0.5);
+      transition: all 0.3s ease; text-transform: uppercase; margin: 5px;
+    }
+    button:hover {
+      transform: scale(1.05); box-shadow: 0 0 25px var(--neon-purple);
+    }
+
+    /* Game UI */
+    #game-hud {
+      position: absolute; top: 20px; left: 20px; right: 20px;
+      display: flex; justify-content: space-between;
+      pointer-events: none; z-index: 20;
+    }
+    .hud-box {
+      background: var(--glass-bg); border: 1px solid var(--neon-cyan);
+      padding: 10px 20px; border-radius: 15px; font-size: 1.2rem; font-weight: bold;
+      box-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
+    }
+
+    /* Map & Drag Elements */
+    #game-container {
+      position: relative; width: 100vw; height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    
+    #map-container {
+      width: 80%; max-width: 900px; height: 60vh;
+      position: relative;
+    }
+    
+    svg { width: 100%; height: 100%; filter: drop-shadow(0 0 10px rgba(0, 115, 255, 0.5)); }
+    .map-state {
+      fill: rgba(255,255,255,0.1); stroke: var(--neon-cyan); stroke-width: 2;
+      transition: all 0.3s; cursor: crosshair;
+    }
+    .map-state:hover, .map-state.hovered { fill: rgba(0, 243, 255, 0.4); }
+    .map-state.correct { fill: var(--neon-green); stroke: #fff; }
+    .map-state.wrong { fill: var(--neon-red); }
+
+    .inset-marker { fill: var(--neon-purple); stroke: #fff; stroke-width: 2; }
+    
+    #label-tray {
+      width: 90%; height: 150px; background: rgba(0,0,0,0.3);
+      border-top: 2px solid var(--neon-blue); position: absolute; bottom: 0;
+      display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+      padding: 10px; gap: 10px; z-index: 15;
+    }
+
+    .state-label {
+      background: linear-gradient(135deg, rgba(0, 115, 255, 0.8), rgba(0, 243, 255, 0.8));
+      padding: 10px 15px; border-radius: 8px; font-weight: bold;
+      cursor: grab; border: 1px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+      transition: transform 0.1s; user-select: none;
+    }
+    .state-label.dragging {
+      position: absolute; z-index: 100; cursor: grabbing;
+      box-shadow: 0 0 20px var(--neon-green); transform: scale(1.1); pointer-events: none;
+    }
+    .state-label.placed { display: none; } 
+
+    /* Virtual Cursor & Webcam */
+    #virtual-cursor {
+      position: absolute; width: 20px; height: 20px;
+      background: var(--neon-green); border: 2px solid #fff; border-radius: 50%;
+      transform: translate(-50%, -50%); pointer-events: none; z-index: 9999;
+      box-shadow: 0 0 15px var(--neon-green); display: none; transition: width 0.1s, height 0.1s;
+    }
+    #virtual-cursor.pinching { width: 12px; height: 12px; background: var(--neon-red); box-shadow: 0 0 15px var(--neon-red); }
+
+    #webcam-container {
+      position: absolute; bottom: 160px; right: 20px; width: 200px; height: 150px;
+      border: 2px solid var(--neon-purple); border-radius: 10px; overflow: hidden; z-index: 10;
+      box-shadow: 0 0 15px rgba(188, 19, 254, 0.5); background: #000;
+    }
+    #webcam-video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+    /* Confetti Canvas */
+    #confetti { position: absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index: 999; display:none;}
+
+    /* Leaderboard Table */
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; color: white; }
+    th, td { padding: 10px; border-bottom: 1px solid var(--glass-border); text-align: left; }
+    th { color: var(--neon-cyan); }
+    tr:nth-child(even) { background: rgba(255,255,255,0.05); }
+
+    .instruction-icon { font-size: 3rem; margin: 10px; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+  </style>
+</head>
+<body>
+
+  <!-- Audio Elements -->
+  <audio id="sfx-correct" src="https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3"></audio>
+  <audio id="sfx-wrong" src="https://assets.mixkit.co/active_storage/sfx/2004/2004-preview.mp3"></audio>
+  <audio id="sfx-win" src="https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3"></audio>
+
+  <!-- SCREEN: Registration -->
+  <div id="screen-register" class="screen active">
+    <div class="glass-panel">
+      <h1>MALAYSIA MAP PUZZLE</h1>
+      <h2 style="color: var(--neon-purple); font-size:1.5rem;">AI FINGER CHALLENGE</h2>
+      <p style="margin-bottom: 20px;">Gunakan jari anda untuk mengawal kursor!<br>Cubit (Pinch) untuk memilih dan melepaskan label negeri.</p>
+      <div style="display:flex; justify-content:center; gap:20px; margin-bottom:20px;">
+        <div><div class="instruction-icon">👆</div><p>Gerakkan Jari</p></div>
+        <div><div class="instruction-icon">🤏</div><p>Cubit & Tarik</p></div>
+      </div>
+      <input type="text" id="input-nama" placeholder="Nama Murid" required>
+      <input type="text" id="input-kelas" placeholder="Kelas" required>
+      <button id="btn-start" onclick="startGame()">MULA PERMAINAN</button>
+      <div id="reg-msg" style="color:var(--neon-red); margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <!-- SCREEN: Game -->
+  <div id="screen-game" class="screen">
+    <div id="game-hud">
+      <div class="hud-box">SKOR: <span id="hud-score">0</span></div>
+      <div class="hud-box">NYAWA: <span id="hud-lives">❤️❤️❤️</span></div>
+      <div class="hud-box">MASA: <span id="hud-time">00:00</span></div>
+      <div class="hud-box">KEMAJUAN: <span id="hud-progress">0/16</span></div>
+    </div>
+
+    <div id="game-container">
+      <div id="map-container">
+        <!-- Peta Malaysia -->
+        <svg viewBox="0 0 1000 400" id="malaysia-map">
+          <!-- Semenanjung -->
+          <path id="Perlis" data-state="Perlis" class="map-state" d="M 220 50 L 240 50 L 230 70 Z" />
+          <path id="Kedah" data-state="Kedah" class="map-state" d="M 220 50 L 280 60 L 270 120 L 210 100 Z" />
+          <path id="Pulau Pinang" data-state="Pulau Pinang" class="map-state" d="M 200 90 L 215 90 L 210 110 L 195 105 Z" />
+          <path id="Perak" data-state="Perak" class="map-state" d="M 210 100 L 270 120 L 300 180 L 230 200 Z" />
+          <path id="Kelantan" data-state="Kelantan" class="map-state" d="M 280 60 L 330 80 L 310 150 L 270 120 Z" />
+          <path id="Terengganu" data-state="Terengganu" class="map-state" d="M 330 80 L 380 110 L 350 170 L 310 150 Z" />
+          <path id="Pahang" data-state="Pahang" class="map-state" d="M 270 120 L 310 150 L 350 170 L 380 230 L 290 240 Z" />
+          <path id="Selangor" data-state="Selangor" class="map-state" d="M 230 200 L 280 190 L 290 240 L 250 250 Z" />
+          <path id="Negeri Sembilan" data-state="Negeri Sembilan" class="map-state" d="M 250 250 L 290 240 L 310 270 L 270 280 Z" />
+          <path id="Melaka" data-state="Melaka" class="map-state" d="M 270 280 L 310 270 L 320 290 L 280 300 Z" />
+          <path id="Johor" data-state="Johor" class="map-state" d="M 290 240 L 380 230 L 400 290 L 340 320 L 310 270 Z" />
+          
+          <!-- Sabah Sarawak -->
+          <path id="Sarawak" data-state="Sarawak" class="map-state" d="M 500 300 L 600 220 L 750 200 L 800 250 L 700 320 L 550 350 Z" />
+          <path id="Sabah" data-state="Sabah" class="map-state" d="M 750 200 L 850 120 L 950 150 L 880 230 L 800 250 Z" />
+          
+          <!-- Wilayah Persekutuan -->
+          <circle id="Kuala Lumpur" data-state="Kuala Lumpur" class="map-state inset-marker" cx="260" cy="225" r="10" />
+          <text x="235" y="215" fill="#fff" font-size="10">KL</text>
+          
+          <circle id="Putrajaya" data-state="Putrajaya" class="map-state inset-marker" cx="265" cy="245" r="8" />
+          <text x="215" y="245" fill="#fff" font-size="10">Putrajaya</text>
+
+          <circle id="Labuan" data-state="Labuan" class="map-state inset-marker" cx="740" cy="180" r="8" />
+          <text x="710" y="175" fill="#fff" font-size="10">Labuan</text>
+        </svg>
+      </div>
+      
+      <div id="label-tray"></div>
+    </div>
+
+    <div id="webcam-container">
+      <video id="webcam-video" autoplay playsinline></video>
+      <div id="webcam-status" style="position:absolute; bottom:5px; width:100%; text-align:center; font-size:0.8rem; color:var(--neon-green);">Memuatkan Kamera AI...</div>
+    </div>
+    <div id="virtual-cursor"></div>
+  </div>
+
+  <!-- SCREEN: Results -->
+  <div id="screen-result" class="screen">
+    <canvas id="confetti"></canvas>
+    <div class="glass-panel" style="width: 80%; max-width: 600px; z-index: 1000;">
+      <h1 id="res-title">PERMAINAN TAMAT</h1>
+      <h2 id="res-status" style="color:var(--neon-green);">BERJAYA</h2>
+      <div style="font-size: 1.2rem; line-height: 1.8; margin-bottom: 20px; text-align: left; padding: 0 10%;">
+        <p><strong>Nama:</strong> <span id="res-nama"></span></p>
+        <p><strong>Kelas:</strong> <span id="res-kelas"></span></p>
+        <p><strong>Skor Akhir:</strong> <span id="res-skor" style="color:var(--neon-cyan); font-weight:bold;"></span></p>
+        <p><strong>Masa:</strong> <span id="res-masa"></span></p>
+        <p><strong>Baki Nyawa:</strong> <span id="res-nyawa"></span></p>
+        <p><strong>Jawapan Betul:</strong> <span id="res-betul"></span>/16</p>
+      </div>
+      <div id="save-status" style="margin-bottom:15px; color:var(--neon-purple);">Menyimpan rekod...</div>
+      <button onclick="resetGame()">MAIN SEMULA</button>
+      <button onclick="showLeaderboard()">PAPAN KEDUDUKAN</button>
+    </div>
+  </div>
+
+  <!-- SCREEN: Leaderboard -->
+  <div id="screen-leaderboard" class="screen">
+    <div class="glass-panel" style="width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
+      <h1>PAPAN KEDUDUKAN</h1>
+      <table id="lb-table">
+        <thead>
+          <tr>
+            <th>Ked.</th>
+            <th>Nama</th>
+            <th>Kelas</th>
+            <th>Skor</th>
+            <th>Masa</th>
+            <th>Nyawa</th>
+          </tr>
+        </thead>
+        <tbody id="lb-body"></tbody>
+      </table>
+      <div style="margin-top: 20px;">
+        <button onclick="showLeaderboard()">SEGARKAN</button>
+        <button onclick="showScreen('screen-register')">KEMBALI KE MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       JAVASCRIPT LOGIC
+       ========================================================================= -->
+  <script>
+    const STATES_DATA = [
+      "Johor", "Kedah", "Kelantan", "Melaka", "Negeri Sembilan", "Pahang", 
+      "Perak", "Perlis", "Pulau Pinang", "Sabah", "Sarawak", "Selangor", "Terengganu",
+      "Kuala Lumpur", "Putrajaya", "Labuan"
+    ];
+    
+    let gameState = {
+      name: "", className: "", score: 0, lives: 3, correctAnswers: 0,
+      startTime: null, timerInterval: null, timeElapsed: 0,
+      isGameOver: false, isPinching: false, draggedLabel: null
+    };
+
+    let camera = null;
+    let cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+    const PINCH_THRESHOLD = 0.05; 
+    const PINCH_RELEASE = 0.08;
+
+    const screens = {
+      register: document.getElementById('screen-register'),
+      game: document.getElementById('screen-game'),
+      result: document.getElementById('screen-result'),
+      leaderboard: document.getElementById('screen-leaderboard')
+    };
+    const vCursor = document.getElementById('virtual-cursor');
+    const labelTray = document.getElementById('label-tray');
+
+    function showScreen(screenId) {
+      Object.values(screens).forEach(s => s.classList.remove('active'));
+      document.getElementById(screenId).classList.add('active');
+    }
+
+    function startGame() {
+      const name = document.getElementById('input-nama').value.trim();
+      const cls = document.getElementById('input-kelas').value.trim();
+      
+      if (!name || !cls) {
+        document.getElementById('reg-msg').innerText = "Sila masukkan Nama dan Kelas dahulu.";
+        return;
+      }
+      document.getElementById('reg-msg').innerText = "Memuatkan...";
+      
+      gameState = {
+        name: name, className: cls, score: 0, lives: 3, correctAnswers: 0,
+        startTime: Date.now(), timerInterval: null, timeElapsed: 0,
+        isGameOver: false, isPinching: false, draggedLabel: null
+      };
+
+      updateHUD();
+      generateLabels();
+      resetMap();
+      showScreen('screen-game');
+      
+      gameState.timerInterval = setInterval(updateTimer, 1000);
+      
+      // Load kamera secara selari tanpa menyekat game
+      if (!camera) {
+        initWebcamTracking().catch(err => {
+          console.error(err);
+          document.getElementById('webcam-status').innerText = "Gagal memuatkan AI: Guna Tetikus";
+          document.getElementById('webcam-status').style.color = "var(--neon-red)";
+        });
+      }
+    }
+
+    function updateTimer() {
+      if (gameState.isGameOver) return;
+      gameState.timeElapsed = Math.floor((Date.now() - gameState.startTime) / 1000);
+      const mins = ("0" + Math.floor(gameState.timeElapsed / 60)).slice(-2);
+      const secs = ("0" + (gameState.timeElapsed % 60)).slice(-2);
+      document.getElementById('hud-time').innerText = `${mins}:${secs}`;
+    }
+
+    function updateHUD() {
+      document.getElementById('hud-score').innerText = gameState.score;
+      document.getElementById('hud-lives').innerText = "❤️".repeat(gameState.lives) || "💀";
+      document.getElementById('hud-progress').innerText = `${gameState.correctAnswers}/16`;
+    }
+
+    function generateLabels() {
+      labelTray.innerHTML = '';
+      let shuffled = [...STATES_DATA].sort(() => Math.random() - 0.5);
+      shuffled.forEach(state => {
+        let div = document.createElement('div');
+        div.className = 'state-label';
+        div.innerText = state;
+        div.dataset.target = state;
+        
+        // Sokongan Tetikus (Mouse Fallback)
+        div.addEventListener('mousedown', (e) => startDrag(div, e.clientX, e.clientY));
+        
+        labelTray.appendChild(div);
+      });
+    }
+
+    function resetMap() {
+      document.querySelectorAll('.map-state').forEach(el => {
+        el.classList.remove('correct', 'wrong');
+      });
+    }
+
+    function startDrag(label, x, y) {
+      if (gameState.isGameOver || label.classList.contains('placed')) return;
+      gameState.draggedLabel = label;
+      label.classList.add('dragging');
+      moveDraggedLabel(x, y);
+    }
+
+    function moveDraggedLabel(x, y) {
+      if (gameState.draggedLabel) {
+        gameState.draggedLabel.style.left = x + 'px';
+        gameState.draggedLabel.style.top = y + 'px';
+      }
+    }
+
+    function releaseDrag(x, y) {
+      if (!gameState.draggedLabel || gameState.isGameOver) return;
+      let label = gameState.draggedLabel;
+      label.classList.remove('dragging');
+      label.style.pointerEvents = 'none';
+
+      let elemBelow = document.elementFromPoint(x, y);
+      label.style.pointerEvents = 'auto';
+
+      if (elemBelow && elemBelow.classList.contains('map-state')) {
+        checkAnswer(label, elemBelow);
+      } else {
+        label.style.left = 'auto';
+        label.style.top = 'auto';
+        label.style.position = 'relative';
+      }
+      gameState.draggedLabel = null;
+    }
+
+    function checkAnswer(label, mapTarget) {
+      const correctTarget = label.dataset.target;
+      const droppedTarget = mapTarget.dataset.state;
+
+      if (correctTarget === droppedTarget) {
+        document.getElementById('sfx-correct').play().catch(()=>{});
+        mapTarget.classList.add('correct');
+        label.classList.add('placed'); 
+        gameState.score += 100;
+        gameState.correctAnswers++;
+        if (gameState.correctAnswers >= 16) endGame(true);
+      } else {
+        document.getElementById('sfx-wrong').play().catch(()=>{});
+        mapTarget.classList.add('wrong');
+        setTimeout(() => mapTarget.classList.remove('wrong'), 1000);
+        gameState.lives--;
+        
+        label.style.left = 'auto';
+        label.style.top = 'auto';
+        label.style.position = 'relative';
+
+        if (gameState.lives <= 0) endGame(false);
+      }
+      updateHUD();
+    }
+
+    // Sokongan pergerakan tetikus
+    window.addEventListener('mousemove', (e) => {
+      if (gameState.draggedLabel) moveDraggedLabel(e.clientX, e.clientY);
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (gameState.draggedLabel) releaseDrag(e.clientX, e.clientY);
+    });
+
+
+    // --- MediaPipe Hand Tracking ---
+    async function initWebcamTracking() {
+      const videoElement = document.getElementById('webcam-video');
+      const statusElement = document.getElementById('webcam-status');
+      
+      try {
+        if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+          throw new Error("Library MediaPipe disekat oleh browser. Guna Tetikus.");
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+        
+        hands.setOptions({
+          maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7
+        });
+        hands.onResults(onResults);
+        
+        camera = new Camera(videoElement, {
+          onFrame: async () => { await hands.send({image: videoElement}); }, width: 320, height: 240
+        });
+        await camera.start();
+        vCursor.style.display = 'block';
+        statusElement.innerText = "Kamera Aktif & Mengecam Tangan";
+        statusElement.style.color = "var(--neon-green)";
+      } catch(err) {
+        console.error(err);
+        statusElement.innerText = "Tiada Kamera: Sila guna Tetikus";
+        statusElement.style.color = "var(--neon-red)";
+      }
+    }
+
+    function onResults(results) {
+      if (gameState.isGameOver) return;
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        const indexTip = landmarks[8];
+        const thumbTip = landmarks[4];
+
+        const rawX = 1 - indexTip.x; 
+        const rawY = indexTip.y;
+        
+        cx += (rawX * window.innerWidth - cx) * 0.3;
+        cy += (rawY * window.innerHeight - cy) * 0.3;
+
+        vCursor.style.left = `${cx}px`;
+        vCursor.style.top = `${cy}px`;
+
+        const distance = Math.sqrt(Math.pow(indexTip.x - thumbTip.x, 2) + Math.pow(indexTip.y - thumbTip.y, 2));
+
+        let elemBelow = document.elementFromPoint(cx, cy);
+        document.querySelectorAll('.map-state').forEach(el => el.classList.remove('hovered'));
+        if (elemBelow && elemBelow.classList.contains('map-state')) elemBelow.classList.add('hovered');
+
+        // Pencubitan (Pinching)
+        if (distance < PINCH_THRESHOLD && !gameState.isPinching) {
+          gameState.isPinching = true;
+          vCursor.classList.add('pinching');
+          if (!gameState.draggedLabel && elemBelow && elemBelow.classList.contains('state-label')) {
+            startDrag(elemBelow, cx, cy);
+          }
+        } else if (distance > PINCH_RELEASE && gameState.isPinching) {
+          gameState.isPinching = false;
+          vCursor.classList.remove('pinching');
+          if (gameState.draggedLabel) releaseDrag(cx, cy);
+        }
+
+        if (gameState.isPinching && gameState.draggedLabel) moveDraggedLabel(cx, cy);
+      }
+    }
+
+    // --- End Game & Data Saving (LOKAL UTK UJIAN) ---
+    function endGame(win) {
+      gameState.isGameOver = true;
+      clearInterval(gameState.timerInterval);
+      
+      document.getElementById('res-title').innerText = win ? "TAHNIAH!" : "PERMAINAN TAMAT";
+      document.getElementById('res-status').innerText = win ? "BERJAYA" : "GAGAL";
+      document.getElementById('res-status').style.color = win ? "var(--neon-green)" : "var(--neon-red)";
+      
+      document.getElementById('res-nama').innerText = gameState.name;
+      document.getElementById('res-kelas').innerText = gameState.className;
+      document.getElementById('res-skor').innerText = gameState.score;
+      document.getElementById('res-masa').innerText = document.getElementById('hud-time').innerText;
+      document.getElementById('res-nyawa').innerText = gameState.lives;
+      document.getElementById('res-betul').innerText = gameState.correctAnswers;
+      
+      if(win) {
+        document.getElementById('sfx-win').play().catch(()=>{});
+        triggerConfetti();
+      }
+
+      showScreen('screen-result');
+      saveData();
+    }
+
+    function saveData() {
+      const saveStatus = document.getElementById('save-status');
+      saveStatus.innerText = "Menyimpan rekod...";
+      
+      const payload = {
+        name: gameState.name, className: gameState.className, score: gameState.score,
+        time: document.getElementById('hud-time').innerText, lives: gameState.lives,
+        correctAnswers: gameState.correctAnswers, status: gameState.correctAnswers === 16 ? "BERJAYA" : "GAGAL"
+      };
+
+      if(typeof google !== 'undefined' && google.script) {
+        // Talian Sebenar Google Sheets
+        google.script.run.withSuccessHandler(res => {
+          saveStatus.innerText = res.success ? "Rekod berjaya disimpan!" : "Ralat menyimpan.";
+        }).saveGameResult(payload);
+      } else {
+        // UJIAN LOKAL SAHAJA (Test Terus) - Simpan di LocalStorage
+        let records = JSON.parse(localStorage.getItem('mapPuzzleRecords')) || [];
+        records.push(payload);
+        localStorage.setItem('mapPuzzleRecords', JSON.stringify(records));
+        saveStatus.innerText = "Rekod disimpan (Mod Ujian Lokal - Test Terus).";
+        saveStatus.style.color = "var(--neon-green)";
+      }
+    }
+
+    function showLeaderboard() {
+      showScreen('screen-leaderboard');
+      const tbody = document.getElementById('lb-body');
+      tbody.innerHTML = '';
+
+      if(typeof google !== 'undefined' && google.script) {
+        google.script.run.withSuccessHandler(res => {
+          if(res.success && res.data.length > 0) {
+            res.data.forEach((row, i) => tbody.innerHTML += `<tr><td>${i+1}</td><td>${row.name}</td><td>${row.className}</td><td>${row.score}</td><td>${row.time}</td><td>${row.lives}</td></tr>`);
+          }
+        }).getLeaderboard();
+      } else {
+        // UJIAN LOKAL SAHAJA (Test Terus) - Baca dari LocalStorage
+        let records = JSON.parse(localStorage.getItem('mapPuzzleRecords')) || [];
+        if(records.length > 0) {
+          records.sort((a,b) => b.score - a.score);
+          records.slice(0, 10).forEach((row, i) => {
+            tbody.innerHTML += `<tr><td>${i+1}</td><td>${row.name}</td><td>${row.className}</td><td style="color:var(--neon-cyan)">${row.score}</td><td>${row.time}</td><td>${row.lives}</td></tr>`;
+          });
+        } else {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Tiada rekod ujian lagi.</td></tr>';
+        }
+      }
+    }
+
+    function resetGame() {
+      document.getElementById('confetti').style.display = 'none';
+      showScreen('screen-register');
+    }
+
+    function triggerConfetti() {
+      const canvas = document.getElementById('confetti');
+      const ctx = canvas.getContext('2d');
+      canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+      canvas.style.display = 'block';
+
+      let particles = Array.from({length: 100}, () => ({
+        x: Math.random() * canvas.width, y: Math.random() * canvas.height - canvas.height,
+        r: Math.random() * 6 + 2, dx: Math.random() * 4 - 2, dy: Math.random() * 4 + 2,
+        color: ['#00f3ff','#0073ff','#bc13fe','#00ff66'][Math.floor(Math.random()*4)]
+      }));
+
+      function draw() {
+        if(!gameState.isGameOver) return;
+        ctx.clearRect(0,0,canvas.width, canvas.height);
+        particles.forEach(p => {
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+          ctx.fillStyle = p.color; ctx.fill();
+          p.x += p.dx; p.y += p.dy;
+          if(p.y > canvas.height) { p.y = 0; p.x = Math.random() * canvas.width; }
+        });
+        requestAnimationFrame(draw);
+      }
+      draw();
+    }
+  </script>
+</body>
+</html>
